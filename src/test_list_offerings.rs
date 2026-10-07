@@ -153,10 +153,7 @@ fn test_list_offerings_isolated_by_issuer() {
     register(&f, &first_issuer, &namespace, &first_token);
     register(&f, &second_issuer, &namespace, &second_token);
 
-    assert_eq!(
-        f.client.list_offerings(&first_issuer, &namespace),
-        as_vec(&f.env, &[&first_token])
-    );
+    assert_eq!(f.client.list_offerings(&first_issuer, &namespace), as_vec(&f.env, &[&first_token]));
     assert_eq!(
         f.client.list_offerings(&second_issuer, &namespace),
         as_vec(&f.env, &[&second_token])
@@ -239,7 +236,8 @@ fn test_list_offerings_silently_truncates_at_max_page_limit() {
     // reader, with no error and no cursor. Callers that trust it will under-report.
     let listed = f.client.list_offerings(&issuer, &namespace);
     assert_eq!(listed.len(), MAX_PAGE_LIMIT);
-    let listed_not_containing_tail = listed.iter().all(|token| token != tokens.get(MAX_PAGE_LIMIT).unwrap());
+    let listed_not_containing_tail =
+        listed.iter().all(|token| token != tokens.get(MAX_PAGE_LIMIT).unwrap());
     assert!(listed_not_containing_tail, "tail offering must be absent from list_offerings");
 
     for index in 0..MAX_PAGE_LIMIT {
