@@ -4,21 +4,21 @@
 //!
 //! | Scenario / Property                                          | Assertions / Expected Behavior |
 //! |--------------------------------------------------------------|--------------------------------|
-//! | Uninitialized / Non-existent tenant                          | Returns `0` (clean default)    |
-//! | Isolation across distinct issuers (same namespace)           | Increments strictly isolate    |
-//! | Isolation across distinct namespaces (same issuer)          | Increments strictly isolate    |
-//! | Listing with boundary / diverse namespace symbols            | Exact listing tracking         |
-//! | State monotonicity on successful registrations               | `0 -> 1 -> 2 -> ...`          |
+//! | Uninitialized / Non-existent tenant                          | Returns empty `Vec`            |
+//! | Isolation across distinct issuers (same namespace)           | Listings strictly isolate      |
+//! | Isolation across distinct namespaces (same issuer)          | Listings strictly isolate      |
+//! | Registration with boundary / diverse namespace symbols       | Exact listing tracking         |
+//! | State monotonicity on successful registrations               | `[] -> [a] -> [a,b] -> ...`    |
 //! | No auth required / callable by arbitrary unprivileged env    | Public view access preserved   |
-//! | Failed registration rollback (invalid cap / amount)          | Listing remains unchanged (0)  |
-//! | Failed registration rollback (invalid share bps > 10,000)    | Listing remains unchanged (0)  |
-//! | Duplicate offering registration rejection                    | Listing does not double-count  |
-//! | Multi-issuer offering transfer acceptance                    | Receiver listing updates cleanly |
+//! | Failed registration rollback (invalid cap / amount)          | List remains unchanged (empty) |
+//! | Failed registration rollback (invalid share bps > 10,000)    | List remains unchanged (empty) |
+//! | Duplicate offering registration rejection                    | List does not double-count     |
+//! | Multi-issuer offering transfer acceptance                    | Receiver list updates cleanly  |
 //! | Direct contract call via `RevoraRevenueShare::list_offerings` | Exact match with client helper |
 
 #![cfg(test)]
 
-use crate::{DataKey, RevoraError, RevoraRevenueShare, RevoraRevenueShareClient, TenantId};
+use crate::{RevoraError, RevoraRevenueShare, RevoraRevenueShareClient};
 use soroban_sdk::{
     symbol_short,
     testutils::Address as _,
@@ -64,8 +64,8 @@ fn list_offerings_returns_empty_for_uninitialized_tenant() {
     let issuer = Address::generate(&env);
     let namespace = symbol_short!("default");
 
-    let count = client.get_offering_count(&issuer, &namespace);
-    assert_eq!(count, 0, "Unregistered tenant must return 0 offerings");
+    let offerings = client.list_offerings(&issuer, &namespace);
+    assert_eq!(offerings.len(), 0, "Unregistered tenant must return empty list");
 }
 
 #[test]
@@ -265,8 +265,8 @@ fn direct_static_list_offerings_matches_client_interface() {
         register_single_offering(&env, &client, &issuer, &namespace, &token);
 
         // Verify count through client
-        let client_count = client.list_offerings(&issuer, &namespace).len();
-        assert_eq!(client_count, i + 1);
+        let client_list = client.list_offerings(&issuer, &namespace);
+        assert_eq!(client_list.len(), i + 1);
 
         // Verify count directly via contract invocation inside contract env context
         env.as_contract(&contract_id, || {
@@ -276,14 +276,6 @@ fn direct_static_list_offerings_matches_client_interface() {
                 namespace.clone(),
             );
             assert_eq!(static_list.len(), i + 1);
-
-            // Directly inspect low-level DataKey::OfferCount persistent storage
-            let key = DataKey::OfferCount(TenantId {
-                issuer: issuer.clone(),
-                namespace: namespace.clone(),
-            });
-            let stored_val: Option<u32> = env.storage().persistent().get(&key);
-            assert_eq!(stored_val, Some(i + 1));
         });
     }
 }
