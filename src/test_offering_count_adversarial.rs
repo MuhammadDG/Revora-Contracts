@@ -1,13 +1,13 @@
-//! Adversarial and boundary test coverage for `list_offerings` in `lib.rs`.
+//! Adversarial and boundary test coverage for `list_offerings` in `lib.rs` (#1089).
 //!
 //! # Coverage Matrix
 //!
 //! | Scenario / Property                                          | Assertions / Expected Behavior |
 //! |--------------------------------------------------------------|--------------------------------|
-//! | Uninitialized / Non-existent tenant                          | Returns empty `Vec`            |
-//! | Isolation across distinct issuers (same namespace)           | Listings strictly isolate      |
-//! | Isolation across distinct namespaces (same issuer)          | Listings strictly isolate      |
-//! | Registration with boundary / diverse namespace symbols       | Exact listing tracking         |
+//! | Uninitialized / Non-existent tenant                          | Returns `0` (clean default)    |
+//! | Isolation across distinct issuers (same namespace)           | Increments strictly isolate    |
+//! | Isolation across distinct namespaces (same issuer)          | Increments strictly isolate    |
+//! | Registration with boundary / diverse namespace symbols       | Exact list tracking            |
 //! | State monotonicity on successful registrations               | `[] -> [a] -> [a,b] -> ...`    |
 //! | No auth required / callable by arbitrary unprivileged env    | Public view access preserved   |
 //! | Failed registration rollback (invalid cap / amount)          | List remains unchanged (empty) |
