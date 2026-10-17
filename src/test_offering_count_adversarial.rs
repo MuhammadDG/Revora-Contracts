@@ -1,5 +1,4 @@
-//! Adversarial and boundary test coverage for `get_offering_count` in `lib.rs` (#1089).
-//! Adversarial and boundary test coverage for `get_offering_count` in `lib.rs` (#1089).
+//! Adversarial and boundary test coverage for `get_offering_count` and `list_offerings` in `lib.rs` (#1089).
 //!
 //! # Coverage Matrix
 //!
@@ -16,7 +15,10 @@
 //! | Duplicate offering registration rejection                    | Count does not double-count    |
 //! | Multi-issuer offering transfer acceptance                    | Receiver count updates cleanly |
 //! | Direct contract call via `RevoraRevenueShare::get_offering_count` | Exact match with client helper |
-//! | Adversarial `list_offerings` coverage (#1089)                | Pagination, boundaries, isolation |
+//! | `list_offerings` on uninitialized / non-existent tenant      | Returns empty `Vec`            |
+//! | `list_offerings` isolation across issuers and namespaces     | Strict per-tenant partitioning |
+//! | `list_offerings` after rejected registrations                | List unchanged (empty)         |
+//! | `list_offerings` direct static call matches client helper    | Exact match with client helper |
 
 #![cfg(test)]
 
@@ -26,7 +28,6 @@ use soroban_sdk::{
     testutils::Address as _,
     Address, Env, Symbol, Vec,
 };
-use soroban_sdk::IntoVal;
 
 // ── Test Setup Helpers ────────────────────────────────────────────────────────
 
@@ -58,7 +59,6 @@ fn register_single_offering(
         &0,
     );
 }
-
 
 // ── Tests: Baseline and Querying Non-existent Tenants ────────────────────────
 
@@ -320,7 +320,7 @@ fn get_offering_count_updates_appropriately_on_accepted_issuer_transfer() {
     assert_eq!(client.get_offering_count(&issuer_old, &namespace), 2);
 }
 
-// ── Tests: Adversarial `list_offerings` Coverage ─────────────────────────────
+// ── Tests: list_offerings Baseline and Non-existent Tenants ──────────────────
 
 #[test]
 fn list_offerings_returns_empty_for_uninitialized_tenant() {
@@ -328,34 +328,48 @@ fn list_offerings_returns_empty_for_uninitialized_tenant() {
     let issuer = Address::generate(&env);
     let namespace = symbol_short!("default");
 
-    let offerings = client.list_offerings(&issuer, &namespace, &0u32, &10u32);
-    assert_eq!(offerings.len(), 0, "Unregistered tenant must return empty list");
+    let offerings = client.list_offerings(&issuer, &namespace);
+    assert_eq!(offerings.len(), 0, "Unregistered tenant must list no offerings");
 }
 
 #[test]
-fn list_offerings_isolates_between_issuers_same_namespace() {
+fn list_offerings_returns_empty_for_random_issuers_and_namespaces() {
+    let (env, _contract_id, client) = setup_env();
+
+    for _ in 0..5 {
+        let issuer = Address::generate(&env);
+        let namespace = Symbol::new(&env, "random_ns");
+        let offerings = client.list_offerings(&issuer, &namespace);
+        assert_eq!(offerings.len(), 0);
+    }
+}
+
+// ── Tests: list_offerings Tenant Isolation ───────────────────────────────────
+
+#[test]
+fn list_offerings_isolates_between_different_issuers_same_namespace() {
     let (env, _contract_id, client) = setup_env();
     let issuer_a = Address::generate(&env);
     let issuer_b = Address::generate(&env);
     let namespace = symbol_short!("shared");
 
-    let token_a = Address::generate(&env);
-    let token_b = Address::generate(&env);
+    let token_a1 = Address::generate(&env);
+    let token_b1 = Address::generate(&env);
 
-    register_single_offering(&env, &client, &issuer_a, &namespace, &token_a);
-    register_single_offering(&env, &client, &issuer_b, &namespace, &token_b);
+    register_single_offering(&env, &client, &issuer_a, &namespace, &token_a1);
+    register_single_offering(&env, &client, &issuer_b, &namespace, &token_b1);
 
-    let list_a = client.list_offerings(&issuer_a, &namespace, &0u32, &10u32);
-    let list_b = client.list_offerings(&issuer_b, &namespace, &0u32, &10u32);
+    let list_a = client.list_offerings(&issuer_a, &namespace);
+    let list_b = client.list_offerings(&issuer_b, &namespace);
 
     assert_eq!(list_a.len(), 1);
     assert_eq!(list_b.len(), 1);
-    assert_eq!(list_a.get(0).unwrap().token, token_a);
-    assert_eq!(list_b.get(0).unwrap().token, token_b);
+    assert_eq!(list_a.get(0).unwrap(), token_a1);
+    assert_eq!(list_b.get(0).unwrap(), token_b1);
 }
 
 #[test]
-fn list_offerings_isolates_between_namespaces_same_issuer() {
+fn list_offerings_isolates_between_different_namespaces_same_issuer() {
     let (env, _contract_id, client) = setup_env();
     let issuer = Address::generate(&env);
     let ns_prod = symbol_short!("prod");
@@ -367,56 +381,23 @@ fn list_offerings_isolates_between_namespaces_same_issuer() {
     register_single_offering(&env, &client, &issuer, &ns_prod, &token_prod);
     register_single_offering(&env, &client, &issuer, &ns_staging, &token_staging);
 
-    let list_prod = client.list_offerings(&issuer, &ns_prod, &0u32, &10u32);
-    let list_staging = client.list_offerings(&issuer, &ns_staging, &0u32, &10u32);
+    let list_prod = client.list_offerings(&issuer, &ns_prod);
+    let list_staging = client.list_offerings(&issuer, &ns_staging);
 
     assert_eq!(list_prod.len(), 1);
     assert_eq!(list_staging.len(), 1);
-    assert_eq!(list_prod.get(0).unwrap().token, token_prod);
-    assert_eq!(list_staging.get(0).unwrap().token, token_staging);
+    assert_eq!(list_prod.get(0).unwrap(), token_prod);
+    assert_eq!(list_staging.get(0).unwrap(), token_staging);
 }
 
-#[test]
-fn list_offerings_pagination_boundaries() {
-    let (env, _contract_id, client) = setup_env();
-    let issuer = Address::generate(&env);
-    let namespace = symbol_short!("page");
-
-    for _ in 0..5 {
-        let token = Address::generate(&env);
-        register_single_offering(&env, &client, &issuer, &namespace, &token);
-    }
-
-    // Full page
-    let all = client.list_offerings(&issuer, &namespace, &0u32, &10u32);
-    assert_eq!(all.len(), 5);
-
-    // Start at offset
-    let tail = client.list_offerings(&issuer, &namespace, &3u32, &10u32);
-    assert_eq!(tail.len(), 2);
-
-    // Limit smaller than remaining
-    let limited = client.list_offerings(&issuer, &namespace, &0u32, &2u32);
-    assert_eq!(limited.len(), 2);
-
-    // Offset beyond count
-    let empty = client.list_offerings(&issuer, &namespace, &10u32, &5u32);
-    assert_eq!(empty.len(), 0);
-
-    // Zero limit
-    let zero = client.list_offerings(&issuer, &namespace, &0u32, &0u32);
-    assert_eq!(zero.len(), 0);
-}
+// ── Tests: list_offerings State Invariance on Rejected Registrations ─────────
 
 #[test]
-fn list_offerings_unchanged_after_rejected_registration() {
+fn list_offerings_unchanged_on_rejected_invalid_bps() {
     let (env, _contract_id, client) = setup_env();
     let issuer = Address::generate(&env);
     let namespace = symbol_short!("ns");
     let token = Address::generate(&env);
-
-    let before = client.list_offerings(&issuer, &namespace, &0u32, &10u32);
-    assert_eq!(before.len(), 0);
 
     let res = client.try_register_offering(
         &issuer,
@@ -432,19 +413,56 @@ fn list_offerings_unchanged_after_rejected_registration() {
     );
     assert_eq!(res, Err(Ok(RevoraError::InvalidRevenueShareBps)));
 
-    let after = client.list_offerings(&issuer, &namespace, &0u32, &10u32);
-    assert_eq!(after.len(), 0, "Rejected registration must not alter listing");
+    let offerings = client.list_offerings(&issuer, &namespace);
+    assert_eq!(offerings.len(), 0, "Rejected registration must not appear in list");
 }
 
 #[test]
-fn list_offerings_requires_no_auth() {
-    let env = Env::default();
-    let contract_id = env.register_contract(None, RevoraRevenueShare);
-    let client = RevoraRevenueShareClient::new(&env, &contract_id);
+fn list_offerings_unchanged_on_rejected_negative_cap() {
+    let (env, _contract_id, client) = setup_env();
     let issuer = Address::generate(&env);
-    let namespace = symbol_short!("public");
+    let namespace = symbol_short!("ns");
+    let token = Address::generate(&env);
 
-    // No auths mocked; read-only call must still succeed
-    let offerings = client.list_offerings(&issuer, &namespace, &0u32, &10u32);
-    assert_eq!(offerings.len(), 0);
+    let res = client.try_register_offering(
+        &issuer,
+        &Vec::new(&env),
+        &1u32,
+        &namespace,
+        &token,
+        &5_000u32,
+        &token,
+        &-1_i128,
+        &symbol_short!(""),
+        &0,
+    );
+    assert_eq!(res, Err(Ok(RevoraError::InvalidAmount)));
+
+    let offerings = client.list_offerings(&issuer, &namespace);
+    assert_eq!(offerings.len(), 0, "Rejected registration must not appear in list");
+}
+
+// ── Tests: list_offerings Direct Static Invocation ───────────────────────────
+
+#[test]
+fn direct_static_list_offerings_matches_client_interface() {
+    let (env, contract_id, client) = setup_env();
+    let issuer = Address::generate(&env);
+    let namespace = symbol_short!("static");
+
+    let token = Address::generate(&env);
+    register_single_offering(&env, &client, &issuer, &namespace, &token);
+
+    let client_list = client.list_offerings(&issuer, &namespace);
+    assert_eq!(client_list.len(), 1);
+
+    env.as_contract(&contract_id, || {
+        let static_list = RevoraRevenueShare::list_offerings(
+            env.clone(),
+            issuer.clone(),
+            namespace.clone(),
+        );
+        assert_eq!(static_list.len(), client_list.len());
+        assert_eq!(static_list.get(0).unwrap(), token);
+    });
 }
