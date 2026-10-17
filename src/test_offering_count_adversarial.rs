@@ -18,7 +18,7 @@
 
 #![cfg(test)]
 
-use crate::{RevoraError, RevoraRevenueShare, RevoraRevenueShareClient};
+use crate::{DataKey, RevoraError, RevoraRevenueShare, RevoraRevenueShareClient, TenantId};
 use soroban_sdk::{
     symbol_short,
     testutils::Address as _,
@@ -276,6 +276,14 @@ fn direct_static_list_offerings_matches_client_interface() {
                 namespace.clone(),
             );
             assert_eq!(static_list.len(), i + 1);
+
+            // Directly inspect low-level DataKey::OfferCount persistent storage
+            let key = DataKey::OfferCount(TenantId {
+                issuer: issuer.clone(),
+                namespace: namespace.clone(),
+            });
+            let stored_val: Option<u32> = env.storage().persistent().get(&key);
+            assert_eq!(stored_val, Some(i + 1));
         });
     }
 }
